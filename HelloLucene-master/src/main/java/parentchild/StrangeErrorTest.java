@@ -22,9 +22,12 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.queryparser.classic.QueryParser.Operator;
+import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanClause.Occur;
+import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.BooleanQuery.Builder;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.SearcherFactory;
 import org.apache.lucene.search.SearcherManager;
@@ -32,6 +35,7 @@ import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField.Type;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.join.CheckJoinIndex;
 import org.apache.lucene.search.join.QueryBitSetProducer;
 import org.apache.lucene.search.join.ScoreMode;
 import org.apache.lucene.search.join.ToParentBlockJoinQuery;
@@ -68,11 +72,6 @@ public class StrangeErrorTest {
 
 		storeQueryBuilder.add(new TermQuery(new Term("docType", "store")), Occur.MUST);
 
-		QueryParser queryParser = new QueryParser("name", analyzer);
-		queryParser.setDefaultOperator(Operator.AND);
-		storeQueryBuilder.add(queryParser.parse(QueryParser.escape(searchString)), Occur.MUST);
-
-
 		Builder bookInfoQueryBuilder = new Builder();
 		bookInfoQueryBuilder.add(new TermQuery(new Term("docType", "bookInfo")), Occur.MUST);
 
@@ -81,11 +80,22 @@ public class StrangeErrorTest {
 
 		ToParentBlockJoinQuery bookStoreQuery = new ToParentBlockJoinQuery(childQuery, new QueryBitSetProducer(parentQuery), ScoreMode.None);
 
+		CheckJoinIndex.check(indexSearcher.getIndexReader(), new QueryBitSetProducer(parentQuery));
+
 		Sort sort = new Sort(new ToParentBlockJoinSortField("sold", Type.LONG, true,
 				new QueryBitSetProducer(parentQuery), new QueryBitSetProducer(childQuery)));
 
-		TopDocs search = indexSearcher.search(bookStoreQuery, 100, sort, true, false);
-		System.out.println("Search using query [" + bookStoreQuery + "] returned [" + search.scoreDocs.length + "] hits (total [" + search.totalHits + "])");
+		BooleanQuery.Builder fullQuery = new BooleanQuery.Builder();
+		fullQuery.add(new BooleanClause(bookStoreQuery, Occur.MUST));
+
+		QueryParser queryParser = new QueryParser("name", analyzer);
+		queryParser.setDefaultOperator(Operator.AND);
+
+		fullQuery.add(queryParser.parse(QueryParser.escape(searchString)), Occur.MUST);
+		BooleanQuery resultsQuery = fullQuery.build();
+
+		TopDocs search = indexSearcher.search(resultsQuery, 100, sort, true, false);
+		System.out.println("Search using query [" + resultsQuery + "] returned [" + search.scoreDocs.length + "] hits (total [" + search.totalHits + "])");
 	}
 
 	public static void index(SearcherManager searcherManager, IndexWriter indexWriter, BookStore bookStore, BookStoreInfo bookStoreInfo) throws IOException {
@@ -98,7 +108,6 @@ public class StrangeErrorTest {
 
 			Query storeIdQuery = LongPoint.newSetQuery("storeId", storeIds);
 			indexWriter.deleteDocuments(storeIdQuery);
-
 
 			List<Document> documentList = new ArrayList<>();
 
